@@ -1,0 +1,1420 @@
+---
+title: "Urban Oki"
+author: "Maggi Brisbin"
+date: "2023-11-17"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Getting started 
+## Packages, colors, functions
+```{r, message = FALSE}
+library(qiime2R)
+library(CoDaSeq)
+library(phyloseq)
+library(lubridate)
+library(tidyverse)
+library(patchwork)
+library(SpiecEasi)
+library(vegan)
+library(scales)
+
+`%ni%` = Negate(`%in%`)
+
+source("legendplot.R")
+
+colors=c('#e9e9e9','#C14450','#f0b08f','#c2aba6','#60555f','#3c6481','#9fd6e6','#256F64','#63a375')
+
+red<- c("#EB8B8E","#FBD5E2","#E7B6AF","#AC6873", "#D82354")
+orange <- c("#FAAA6D","#FECF92")
+yellow <- c("#FFC317","#F7F4B7", "#CC9C3C")
+green <- c("#16866F","#1E3F1C","#99A339","#516A65","#8BC89F")
+blue <- c("#005694","#B7E1DD","#66879E","#1BAAE2","#5FC8D8")
+purple <- c("#E7D7CE","#A699A9","#434582","#81347D", "#B5218E")
+
+colors30 <- c(blue, purple, red, yellow, orange, green, "black")
+```
+
+```{r, message=FALSE}
+scripts <- c("graphical_methods.R",
+             "tree_methods.R",
+             "plot_merged_trees.R",
+             "specificity_methods.R",
+             "ternary_plot.R",
+             "richness.R",
+             "edgePCA.R",
+             "copy_number_correction.R",
+             "import_frogs.R",
+             "prevalence.R",
+             "compute_niche.R")
+urls <- paste0("https://raw.githubusercontent.com/mahendra-mariadassou/phyloseq-extended/master/R/", scripts)
+
+for (url in urls) {
+  source(url)
+}
+```
+
+## Sample Metadata
+
+```{r}
+samplemap<- read.csv("meta.csv")
+samplemap$date <- dmy(samplemap$date)
+samplemap$Month <- as.factor(as.numeric(samplemap$Month))
+
+samplemap <- samplemap %>% mutate(Day=day(date)) %>% unite(Name, c(LandUse, Number, Position, Month, Day), sep = "_", remove = FALSE)
+
+samplemap$Position <- factor(samplemap$Position, levels =c("S", "C", "N"))
+samplemap$LandUse <- factor(samplemap$LandUse, levels = c("U", "R"))
+
+str(samplemap)
+```
+
+
+## Sequence processing stats
+
+```{r}
+denoise_stats1 <- read.csv("denoising_stats1.tsv", header = TRUE, sep = "\t")[-1,]
+print(dim(denoise_stats1))
+denoise_stats2 <- read.csv("denoising_stats2.tsv", header = TRUE, sep = "\t")[-1,]
+print(dim(denoise_stats2))
+denoise_stats3 <- read.csv("denoising_stats3.tsv", header = TRUE, sep = "\t")[-1,]
+print(dim(denoise_stats3))
+denoise_stats4 <- read.csv("denoising_stats4.tsv", header = TRUE, sep = "\t")[-1,]
+print(dim(denoise_stats4))
+
+denoise_stats <- rbind(denoise_stats1, denoise_stats2, denoise_stats3, denoise_stats4 )
+names(denoise_stats)[1] <- "SampleID"
+
+denoise_stat_w_meta <- merge(denoise_stats, samplemap, by = "SampleID") %>% filter(Number != "s")
+denoise_stat_w_meta$input <- as.numeric(denoise_stat_w_meta$input)
+denoise_stat_w_meta$filtered <- as.numeric(denoise_stat_w_meta$filtered)
+denoise_stat_w_meta$denoised <- as.numeric(denoise_stat_w_meta$denoised)
+denoise_stat_w_meta$merged <- as.numeric(denoise_stat_w_meta$merged)
+denoise_stat_w_meta$non.chimeric <- as.numeric(denoise_stat_w_meta$non.chimeric)
+
+dim(denoise_stat_w_meta)
+```
+### Numbers of sequencing reads 
+minimum number of reads per sample: 
+```{r}
+min(denoise_stat_w_meta$input)
+```
+
+```{r}
+denoise_stat_w_meta %>% filter(input ==2232)
+```
+Minimum number of reads per sample without the outlier:
+```{r}
+denoise_stat_w_meta <- denoise_stat_w_meta %>% filter(input !=2232)
+min(denoise_stat_w_meta$input)
+```
+
+total seqs generated: 
+```{r}
+sum(denoise_stat_w_meta$input)
+```
+
+mean number of seqs per sample:
+```{r}
+mean(denoise_stat_w_meta$input)
+```
+
+maximum number of seqs per sample
+```{r}
+max(denoise_stat_w_meta$input)
+```
+
+
+total number of sequences remaining after denoising :
+
+```{r}
+sum(denoise_stat_w_meta$denoised)
+```
+
+mean number of seqs per sample after denoising:
+```{r}
+mean(denoise_stat_w_meta$denoised)
+```
+
+maximum number of seqs per sample after denoising:
+```{r}
+max(denoise_stat_w_meta$denoised)
+```
+
+minimum number of seqs per sample after denoising:
+```{r}
+min(denoise_stat_w_meta$denoised)
+```
+
+### Plot for sequencing stats
+```{r}
+
+#seqtable <- select(denoise_stat_w_meta)
+
+longseqtable <- denoise_stat_w_meta %>% pivot_longer(cols = c("input", "filtered", "denoised", "merged", "non.chimeric"), names_to = "seqtype", values_to = "number")
+
+longseqtable$seqtype <- factor(longseqtable$seqtype, levels = c("input", "filtered", "denoised", "merged", "non.chimeric"))
+
+ggplot(longseqtable, aes(x = seqtype, y = number)) + theme_test() +geom_boxplot() + facet_wrap(~LandUse) + scale_y_continuous(labels = comma)+ ylab("Sequence Counts") + theme(axis.text.x = element_text(angle = 45, vjust = 0.95, hjust=1)) +xlab("")
+```
+
+## Load Data
+### Metadata
+imported and formatted above, just convert to phyloseq object:
+```{r}
+row.names(samplemap)<- samplemap$SampleID
+META <- sample_data(samplemap)
+```
+
+### ASVs
+```{r}
+ps<-qza_to_phyloseq(features="merged_table.qza")
+```
+
+### Taxonomy (Silva)
+
+```{r}
+taxonomy <- read.csv("16taxonomy.csv", stringsAsFactors = FALSE, header = FALSE)
+names(taxonomy) <- c("row", "tax", "Confidence") #change the headers (column names)
+row.names(taxonomy) <-taxonomy[[1]] #move the feature ID column to become the row names
+taxonomy <- taxonomy[,(-1)] #delete the feature ID  column 
+taxonomy <-  separate(taxonomy, tax, c("Domain","Phylum", "Class", "Order", "Family", "Genus", "Species", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14"), sep = ";", fill = "right")
+taxonomy <- taxonomy[,c(1:7)]
+
+taxonomy$D0 <- with(taxonomy, ifelse(Order == "D_3__Chloroplast", "Chloroplast", "Bacteria"))
+
+col_order<- c("D0", "Domain","Phylum", "Class", "Order", "Family", "Genus", "Species" )
+taxonomy<- taxonomy[, col_order]
+
+taxmat <- as.matrix(taxonomy)
+TAX = tax_table(taxmat)
+```
+
+### Make complete phyloseq object:
+
+```{r}
+ps = merge_phyloseq(ps, TAX, META) 
+```
+
+
+## Plot & filter Chloroplast 16S rRNA sequences
+
+Plot relative abundance as stacked bar plot (all samples including chloroplast sequences):
+
+```{r, fig.width=10}
+ps<- subset_taxa(ps, D0 %in% c("Bacteria", "Chloroplast") )
+psra<- transform_sample_counts(ps, function(OTU) 100* OTU/sum(OTU))
+glomD1<- tax_glom(psra, 'D0')
+
+
+taxabarplot<-plot_bar(glomD1, x= "SampleID", fill = "D0") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=D0), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90)) + xlab("Sample") + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values=c("lightgrey", "#7BB03B"), name = "") + xlab("") 
+
+taxabarplot
+```
+Low chloroplast abundances.
+
+Remove Chloroplast ASVs: 
+```{r}
+ps_nochloro <- subset_taxa(ps, Order != "D_3__Chloroplast" & Domain != "Unassigned")
+ps_nochloro <- subset_samples(ps_nochloro , LandUse %in% c("U", "R") )
+ps_nochloro <- subset_samples(ps_nochloro , SampleID !="U2N-28-07-2021") #remove lowest read number sample
+```
+
+
+# Rarefaction Curves
+```{r , message=FALSE, warning=FALSE, results=FALSE}
+allrare <- ggrare(ps_nochloro, step = 1000, color = "LandUse", se = FALSE)  + geom_line(size = 0.5) + theme(legend.position="none") + xlim(0, 10000)+ scale_color_manual(values = c("#256F64", "#C3D279", "grey"))+ theme_bw() + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank())+  theme(legend.position="none")+xlab("") +ylab("") + scale_x_continuous(labels = comma)
+
+allrare
+```
+
+Zoom in on the low-read-number / low-diversity region of the plot:
+```{r, message=FALSE, warning=FALSE, results=FALSE}
+rare_inset <- prune_samples(sample_sums(ps_nochloro)<=25000, ps_nochloro)
+
+rareinset<- ggrare(rare_inset, step = 10, color = "LandUse", se = FALSE) + geom_line(size = 0.5) + theme(legend.position="none") + xlim(0, 10000)+ scale_color_manual(values = c("#256F64", "#C3D279", "grey"))+ theme_bw() + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank())+  theme(legend.position="right")+xlab("") +ylab("") + scale_x_continuous(labels = comma)
+
+rareinset
+```
+
+Put the two plots next to each other (Figure S2):
+```{r}
+(allrare + rareinset) 
+```
+
+ggsave("rarefaction curves.pdf", width = 10, height = 5)
+
+# Alpha diversity
+
+## Richness (number of observed unique ASVs):
+
+Total number of unique ASVs in the data set:
+```{r}
+
+totalOTU <- data.frame(otu_table(ps_nochloro))
+totalOTU$rowsu <- rowSums(totalOTU)
+totalOTUnotzero <- totalOTU %>% filter(rowsu >1)
+dim(totalOTUnotzero)
+
+```
+
+calculate richness for each sample: 
+```{r}
+library(breakaway)
+library(magrittr)
+
+plugin <- ps_nochloro %>%
+            estimate_richness(measures = "Observed") %$% Observed
+LandUse <- ps_nochloro %>% sample_data %$% LandUse
+Number <- ps_nochloro %>% sample_data %$% Number
+Position <- ps_nochloro %>% sample_data %$% Position
+Area <- ps_nochloro %>% sample_data %$% Area
+Month <- ps_nochloro %>% sample_data %$% Month
+Day <-  ps_nochloro %>% sample_data %$% Day
+
+richness<- data.frame(plugin, LandUse, Number, Position, Area, Month, Day)
+names(richness) <- c("richness", "LandUse", "Number", "Position", "Area", "Month", "Day")
+
+
+richness %>%group_by(LandUse, Month) %>% summarize(mean = mean(richness), min = min(richness), max = max(richness))
+
+```
+
+Plot richness as a box plot:
+```{r}
+
+rich<- richness 
+rich$Month <- as.factor(as.numeric(rich$Month))
+
+RichPlot<- rich %>%  ggplot( aes(x=Month, y=richness, fill = LandUse))+ facet_grid(~ LandUse, scales = "free") +geom_boxplot() + theme_bw() + scale_fill_manual(values = c("#256F64", "#C3D279", "#75D1B7", "#256F64", "black")) + theme(text = element_text(size=14)) +ylab("Observed Richness") +ggtitle("")+ theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +xlab("") 
+
+RichPlot
+```
+minimum richness (sample with lowest # of unique ASVs):
+```{r}
+min(rich$richness)
+```
+
+maximum richness (sample with highest # of unique ASVs):
+```{r}
+max(rich$richness)
+```
+
+mean richness across all samples: 
+```{r}
+mean(rich$richness)
+```
+
+Plot individual richness data points:
+```{r}
+RichPlot<- rich %>%  ggplot( aes(x=Month, y=richness))+ facet_grid(~ LandUse, scales = "free") +geom_point(aes(fill = Position, shape = Number), alpha = 0.7, size = 3) + theme_bw() +  scale_fill_manual(values = c("#005694","#D82354", "#FFC317"))  + theme(text = element_text(size=14)) +ylab("Observed Richness") +ggtitle("")+ theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) + scale_shape_manual(values= c(21,24)) +guides(fill = guide_legend(override.aes=list(shape=21)))
+
+RichPlot
+```
+
+Plot individual data points with mean and standard deviation (Figure S3 A):
+```{r}
+df_mean <- data.frame(rich %>% 
+  group_by(LandUse, Month) %>%
+  dplyr::summarize(meanRichness = mean(richness), sd = sd(richness)) %>% ungroup())
+
+df_sd <- data.frame(rich %>% 
+  group_by(LandUse, Month) %>%
+  dplyr::summarize(meanRichness = mean(richness), sd = sd(richness)) %>% ungroup()  %>% mutate(ymin = meanRichness-sd) %>% mutate(ymax =meanRichness+sd))
+
+df_points <- rich
+  
+
+ggplot() + theme_bw() + geom_point(data =df_points, aes(x =Month, y = richness, color = Position, shape = Number), size = 2) + geom_errorbar(data = df_sd, aes(x = Month, y = meanRichness, ymin=ymin, ymax=ymax), width=0)  +facet_grid(~LandUse) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + scale_color_manual(values = c("#005694","#D82354", "#FFC317")) +ylab("Observed Richness (unique ASVs)") + scale_shape_manual(values= c(21,24)) + geom_point(data = df_mean, aes(x = Month, y = meanRichness), size =10, shape ="-")
+```
+ggsave("richness_means.pdf", width = 8, height = 4)
+
+Significance test for differences between U and R samples each month (Table S1):
+```{r, warning=FALSE}
+rich$LandUse_Month <- paste0(rich$LandUse, rich$Month)
+
+pwt<- pairwise.wilcox.test(rich$richness, rich$LandUse_Month, paired = FALSE, p.adjust = "none") 
+
+str(pwt)
+
+pwt_df<- pwt$p.value
+
+write.csv(pwt_df, "pwt_df.csv")
+```
+
+## Shannon Index
+
+Calculate Shannon index for all samples, plot box plots:
+```{r}
+plugin <- ps_nochloro  %>%
+            estimate_richness(measures = "Shannon") %$% Shannon
+
+shannon<- data.frame(plugin, LandUse, Number, Position, Area, Month, Day)
+names(shannon) <- c("Shannon", "LandUse", "Number", "Position", "Area", "Month", "Day")
+
+shannon$Month <- as.factor(as.numeric(shannon$Month))
+
+shannPlot<- shannon %>%  ggplot( aes(x=Month, y=Shannon, fill = LandUse))+ facet_grid(~ LandUse, scales = "free") +geom_boxplot() + theme_bw() + scale_fill_manual(values = c("#256F64", "#C3D279", "#75D1B7", "black")) + theme(text = element_text(size=14)) +ylab("Shannon Index") +ggtitle("")+ theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +xlab("") 
+
+shannPlot
+```
+Plot individual data points with mean and standard deviation (Figure S3 B):
+```{r}
+df_mean <- data.frame(shannon %>% 
+  group_by(LandUse, Month) %>%
+  dplyr::summarize(meanShannon = mean(Shannon), sd = sd(Shannon)) %>% ungroup())
+
+df_sd <- data.frame(shannon %>% 
+  group_by(LandUse, Month) %>%
+  dplyr::summarize(meanShannon = mean(Shannon), sd = sd(Shannon)) %>% ungroup()  %>% mutate(ymin = meanShannon-sd) %>% mutate(ymax =meanShannon+sd))
+
+df_points <- shannon
+  
+
+ggplot() + theme_bw() + geom_point(data =df_points, aes(x =Month, y = Shannon, color = Position, shape = Number), size = 2) + geom_errorbar(data = df_sd, aes(x = Month, y = meanShannon, ymin=ymin, ymax=ymax), width=0)  +facet_grid(~LandUse) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + scale_color_manual(values = c("#005694","#D82354", "#FFC317")) +ylab("Shannon Index") + scale_shape_manual(values= c(21,24)) + geom_point(data = df_mean, aes(x = Month, y = meanShannon), size =10, shape ="-")
+```
+ggsave("shannon_means.pdf", width = 8, height = 4)
+
+
+
+Significance test for differences between U and R samples each month (Table S1):
+```{r, warning=FALSE}
+shannon$LandUse_Month <- paste0(shannon$LandUse, shannon$Month)
+
+pwt_shann<- pairwise.wilcox.test(shannon$Shannon, shannon$LandUse_Month, paired = FALSE, p.adjust = "none") 
+
+pwt_shann_df<- pwt_shann$p.value
+
+write.csv(pwt_shann_df, "pwt_shann_df.csv")
+```
+
+# Beta Diversity
+
+## PCoA all together
+Figure S4 A
+```{r}
+field <- subset_samples(ps_nochloro, LandUse %in% c("R", "U"))
+
+
+OTU4clr<- data.frame(t(data.frame(otu_table(field))))
+row.names(OTU4clr) <- str_remove(row.names(OTU4clr), "X")
+row.names(OTU4clr) <- gsub("\\.", "-", row.names(OTU4clr))
+OTUs.clr <- codaSeq.clr(OTU4clr + 0.5, samples.by.row=TRUE)
+OTU2 <- otu_table(as.matrix(OTUs.clr), taxa_are_rows = FALSE)
+
+psCLR <- phyloseq(OTU2,TAX,META)
+
+ordu = ordinate(psCLR, "PCoA", "euclidean")
+
+p<-plot_ordination(psCLR, ordu)+theme_bw()  +  theme(text = element_text(size=14)) +  geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +geom_point(aes(fill=Month, shape = LandUse), size =3)  + scale_shape_manual(values= c(21,24)) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3])) +guides(fill = guide_legend(override.aes=list(shape=21)))
+p
+
+```
+ggsave("allSites_PCoA.pdf", width= 6, height = 4)
+
+Same ordination, but separated into two plots for urban and rural samples (Figure S4 B):
+```{r}
+pf<-plot_ordination(psCLR, ordu)+theme_bw()  +  theme(text = element_text(size=14)) +  geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +geom_point(aes(fill=Month, shape = LandUse), size =3)  + scale_shape_manual(values= c(21,24)) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3])) +guides(fill = guide_legend(override.aes=list(shape=21))) + facet_grid(~LandUse)
+pf
+```
+
+### PERMANOVA
+
+All samples by land use: 
+```{r}
+set.seed(1)
+
+meta <- samplemap[row.names(samplemap) %in% row.names(OTU2),]
+
+vdist = vegdist(OTU2, method = "euclidean")
+
+adonis2(vdist ~ LandUse, data = meta)
+```
+Urban and Rural samples are significantly different.
+
+## PCoA for Urban and Rural samples separately 
+### Rural PCoA
+Figure 5A:
+```{r}
+rural <- subset_samples(ps_nochloro, LandUse %in% c("R"))
+
+OTU4clr<- data.frame(t(data.frame(otu_table(rural))))
+row.names(OTU4clr) <- str_remove(row.names(OTU4clr), "X")
+row.names(OTU4clr) <- gsub("\\.", "-", row.names(OTU4clr))
+OTUs.clr <- codaSeq.clr(OTU4clr + 0.5, samples.by.row=TRUE)
+OTU2 <- otu_table(as.matrix(OTUs.clr), taxa_are_rows = FALSE)
+
+psCLR <- phyloseq(OTU2,TAX,META)
+
+ordu = ordinate(psCLR, "PCoA", "euclidean")
+
+r<-plot_ordination(psCLR, ordu)+theme_bw()  +  theme(text = element_text(size=14)) +  geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +geom_point(aes(fill=Month, shape = Number), size =3)  + scale_shape_manual(values= c(21,24, 22)) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3])) +guides(fill = guide_legend(override.aes=list(shape=21))) + ggtitle("Rural Sites")
+r
+
+```
+ggsave("RuralSites_pCoA.pdf", width= 6, height = 4)
+
+### Rural PERMANOVAs
+**Rural samples by month:** (Table 1)
+```{r}
+set.seed(1)
+
+meta <- samplemap[row.names(samplemap) %in% row.names(OTU2),]
+
+vdist = vegdist(OTU2, method = "euclidean")
+
+adonis2(vdist ~ Month, data = meta)
+```
+Rural samples are significantly different between months.
+
+**Rural samples by site number (1 or 2):** (Table 1)
+```{r}
+adonis2(vdist ~ Number, data = meta)
+```
+Rural samples are significantly different between sites (1 or 2).
+
+
+**Rural samples by subsite (S, C, N):**  (Table 1)
+```{r}
+adonis2(vdist ~ Position, data = meta)
+```
+Rural samples are **NOT** significantly different between subsites (S, C, N).
+
+### Urban PCoA
+Figure 5 B
+```{r}
+urban <- subset_samples(ps_nochloro, LandUse %in% c("U"))
+
+OTU4clr<- data.frame(t(data.frame(otu_table(urban))))
+row.names(OTU4clr) <- str_remove(row.names(OTU4clr), "X")
+row.names(OTU4clr) <- gsub("\\.", "-", row.names(OTU4clr))
+OTUs.clr <- codaSeq.clr(OTU4clr + 0.5, samples.by.row=TRUE)
+OTU2 <- otu_table(as.matrix(OTUs.clr), taxa_are_rows = FALSE)
+
+psCLR <- phyloseq(OTU2,TAX,META)
+
+ordu = ordinate(psCLR, "PCoA", "euclidean")
+
+u<-plot_ordination(psCLR, ordu)+theme_bw()  +  theme(text = element_text(size=14)) +  geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +geom_point(aes(fill=Month, shape = Number), size =3)  + scale_shape_manual(values= c(21, 24)) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3])) +guides(fill = guide_legend(override.aes=list(shape=21)))
+u
+```
+ggsave("UrbanSites_pCoA.pdf", width= 6, height = 4)
+
+### Urban PERMANOVAs 
+**Urban samples by month:** (Table 1)
+```{r}
+set.seed(1)
+
+meta <- samplemap[row.names(samplemap) %in% row.names(OTU2),]
+
+vdist = vegdist(OTU2, method = "euclidean")
+
+adonis2(vdist ~ Month, data = meta)
+```
+Urban samples are significantly different between months.
+
+**Urban samples by site number (1 or 2):** (Table 1)
+```{r}
+adonis2(vdist ~ Number, data = meta)
+```
+Urban samples are significantly different between sites (1 or 2).
+
+**Urban samples by subsite (S, C, N):**  (Table 1)
+```{r}
+adonis2(vdist ~ Position, data = meta)
+```
+Urban samples **are** significantly different between subsites (S, C, N).
+
+
+## Rel Abundance Bar Plots
+
+**all orders**
+```{r}
+ps_RA<- transform_sample_counts(field, function(OTU) 100* OTU/sum(OTU))
+
+ps_RA_glomO<- tax_glom(ps_RA, 'Order')
+
+ps_RA_glomO_F = filter_taxa(ps_RA_glomO , function(x) sum(x) > 1, TRUE)
+
+taxabarplot<-plot_bar(ps_RA_glomO_F, x= "date", fill = "Order") +  scale_y_continuous(expand = c(0, 0)) + ggtitle("")  + theme(legend.title=element_blank()) + geom_bar(aes(fill=Order), stat="identity", position="stack", width =0.9) +theme_classic() + theme(text = element_text(size=14))+theme(axis.text.x = element_text(angle = 90)) + xlab("Sample") + ylab("Relative Abundance (%)") + theme(text = element_text(size=14)) + scale_fill_manual(values= rep( colors30, 30))+ xlab("")+ facet_grid(LandUse~Number+Position, scales = "free")
+
+taxabarplot+ theme(legend.position="none")
+```
+Too many to plot ... 
+```{r}
+taxabarplot
+```
+
+all orders that make up less than one percent of a sample get grouped as "<1% abund." for that sample - if they are more abundant in another sample, they remain named in that sample:
+(Figure S6)
+```{r}
+mergemelt<- psmelt(ps_RA_glomO)
+
+mergemelt$Order<-str_sub(mergemelt$Order, 6, str_length(mergemelt$Order))
+
+mergemelt$Order[mergemelt$Abundance < 1] <- "z< 1% abund."
+
+mergemelt<- mergemelt %>% 
+  filter(!str_detect(Order, "Candidatus")) %>% filter(Order != "") %>% filter(!str_detect(Order, "uncultured"))
+
+mergemelt$datePCT <- as.POSIXct(mergemelt$date, format= "%Y-%m-$d")
+
+spatial_plot <- ggplot(data=mergemelt, aes(x=datePCT, y=Abundance, fill=Order)) + facet_grid(LandUse~Number+Position)
+
+spatial_plot + geom_bar(aes(), stat="identity", position="stack") + 
+  theme_classic() + theme(legend.position="bottom") + scale_fill_manual(values = rep(colors30, 30)) +guides(fill=guide_legend(ncol=6)) + theme(legend.title =element_blank()) + scale_x_datetime(date_breaks = "1 month",labels = date_format("%b"))+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+## Bubble Plots
+### All orders 
+Easier way to visualize the relative abundance in all samples 
+(Figure 6)
+```{r}
+mergemelt <- mergemelt %>% filter(Order %ni% c("Candidatus Campbellbacteria" , "Candidatus Falkowbacteria",    "Candidatus Magasanikbacteria","Candidatus Moranbacteria"  ,   "Candidatus Nomurabacteria" ,   "Candidatus Peregrinibacteria", "", "uncultured" , "uncultured bacterium"  ))
+
+mergemelt$LandUse <- factor(mergemelt$LandUse, levels = c("U", "R"))
+mergemelt$Position <- factor(mergemelt$Position, levels = c("S", "C", "N"))
+
+
+bubble <- mergemelt %>% ggplot(aes(x=date, y = Order))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))
+
+bubble
+```
+ggsave("allOrder_bubblesF.pdf",height = 8, width = 11)
+
+
+## filtered rel abund bar plots (Orange, red, orange and red)
+
+### Orange orders
+orders that are prevalent in urban samples but rare in rural samples:
+```{r}
+Uorders <- mergemelt %>% filter(Order %in% c("Vibrionales", "Thiotrichales", "Sphingomonadales", "Chitinophagales", "Campylobacterales", "Betaproteobacteriales", "Bacteroidales", "Alteromonadales", "Aeromonadales"))
+
+
+spatial_plot <- ggplot(data=Uorders, aes(x=date, y=Abundance, fill=Order)) + facet_grid(LandUse~Number+Position)
+
+spatial_plot + geom_bar(aes(), stat="identity", position="stack") + 
+  theme_classic() + theme(legend.position="right") + scale_fill_manual(values = rep(colors30, 30)) + theme(legend.title =element_blank())+ theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0))
+```
+ggsave("orange_orders_barplot.pdf", width  = 8, height = 4)
+
+
+### Red Orders
+orders that are found in at least 3 urban samples and are never found in rural samples:
+```{r}
+red_orders <- mergemelt %>% filter(Order %in% c("Thiomicrospirales", "Sphingobacteriales", "Selenomondales", "Saccharimonadales", "Pseudomonadales", "Lactobacillales", "Clostridiales", "Cloacimonadales"))
+
+
+spatial_plot <- ggplot(data=red_orders, aes(x=date, y=Abundance, fill=Order)) + facet_grid(LandUse~Number+Position)
+
+spatial_plot + geom_bar(aes(), stat="identity", position="stack") + 
+  theme_classic() + theme(legend.position="right") + scale_fill_manual(values = rev(colors30))  + theme(legend.title =element_blank()) +theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0))
+```
+ggsave("red_orders_barplot.pdf", width  = 8, height = 3)
+
+### Red+Orange Orders
+combined 
+(Figure 7)
+```{r}
+Red_orange_orders <- mergemelt %>% filter(Order %in% c("Vibrionales", "Thiotrichales","Thiomicrospirales", "Sphingomonadales", "Sphingobacteriales", "Selenomondales", "Saccharimonadales", "Pseudomonadales", "Lactobacillales", "Clostridiales", "Cloacimonadales", "Chitinophagales", "Campylobacterales", "Betaproteobacteriales", "Bacteroidales", "Alteromonadales", "Aeromonadales"))
+
+spatial_plot <- ggplot(data=Red_orange_orders, aes(x=date, y=Abundance, fill=Order)) + facet_grid(LandUse~Number+Position)
+
+spatial_plot + geom_bar(aes(), stat="identity", position="stack") + 
+  theme_classic() + theme(legend.position="bottom") + scale_fill_manual(values = rep(colors30, 30)) +guides(fill=guide_legend(nrow=4)) + theme(legend.title =element_blank()) + theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0))
+```
+ggsave("red_orange_orders_barplot.pdf", width  = 7, height = 5)
+
+
+summary percents of red/orange orders
+```{r, warning=FALSE}
+summary_percents <- Red_orange_orders %>% group_by(Sample, SS, Name, LandUse, Number, Position, Month, Area, Day) %>% summarise(total = sum(Abundance)) %>% group_by(LandUse, Number) %>% summarise(max= max(total), min = min(total), mean = mean(total))
+
+summary_percents 
+```
+
+## Network Analysis
+
+### Urban samples
+Trying to get the same exact subset as the bars and bubble plots:
+```{r, cache=TRUE}
+ps_glomO <- tax_glom(field, 'Order')
+mergemeltO<- psmelt(ps_glomO)
+
+names(mergemelt)[3] <- "RelAbundance"
+
+mergemelt <- mergemelt %>% select(OTU, Sample, RelAbundance, Order, LandUse, Number)
+mergemeltO <- mergemeltO %>%  select(OTU, Sample, Abundance, Order)
+mergemeltO$Order<-str_sub(mergemeltO$Order, 6, str_length(mergemeltO$Order))
+
+mergeO_together<- left_join(mergemelt, mergemeltO, by = c('OTU' = 'OTU', 'Sample' = 'Sample', 'Order' = 'Order'))
+
+mergemeltU <- mergeO_together %>% filter(LandUse == "U") %>% filter(Order != "z< 1% abund.")
+
+
+mergeU <- mergemeltU %>% select(Sample, Order, Abundance) %>% group_by(Sample, Order) %>% summarize(total = sum(Abundance))  %>% ungroup()
+
+
+mergeU_wider<- mergeU%>%  pivot_wider(names_from = Order, values_from = total, values_fill = 0)
+
+mergeU_wider[is.na(mergeU_wider)] <- 0
+
+mergeU_widerdf <- data.frame(mergeU_wider) 
+
+row.names(mergeU_widerdf)<- mergeU_widerdf$Sample
+mergeU_widerdf<- mergeU_widerdf[, -1]
+```
+
+### Rural samples
+```{r}
+mergemeltR <- mergeO_together %>% filter(LandUse == "R") %>% filter(Order != "z< 1% abund.")
+
+mergeR <- mergemeltR %>% select(Sample, Order, Abundance) %>% group_by(Sample, Order) %>% summarize(total = sum(Abundance))  %>% ungroup()
+
+mergeR_wider<- mergeR%>%  pivot_wider(names_from = Order, values_from = total, values_fill = 0)
+
+mergeR_wider[is.na(mergeR_wider)] <- 0
+
+mergeR_widerdf <- data.frame(mergeR_wider) 
+
+row.names(mergeR_widerdf)<- mergeR_widerdf$Sample
+mergeR_widerdf<- mergeR_widerdf[, -1]
+```
+
+### Rural Network
+```{r}
+pargs2 <- list(rep.num=50, seed=10010, ncores=10)
+
+OTU4corr_named_mat<- as.matrix(mergeR_widerdf)
+
+se <- spiec.easi(OTU4corr_named_mat, method='glasso', lambda.min.ratio=1e-2,
+                          nlambda=20, pulsar.params=pargs2)
+
+se.mb <- spiec.easi(OTU4corr_named_mat, method='mb', lambda.min.ratio=1e-2,
+                          nlambda=20, pulsar.params=pargs2)
+```
+```{r}
+sparcc.oki<- sparcc(OTU4corr_named_mat)
+
+sparcc.graph <- abs(sparcc.oki$Cor) >= 0.3
+diag(sparcc.graph) <- 0
+library(Matrix)
+sparcc.graph <- Matrix(sparcc.graph, sparse=TRUE)
+
+## Create igraph objects
+ig.mb     <- adj2igraph(getRefit(se.mb))
+ig.gl     <- adj2igraph(getRefit(se))
+ig.sparcc <- adj2igraph(sparcc.graph)
+```
+
+Comparing different models for finding network connections:
+```{r}
+library(igraph)
+## set size of vertex proportional to clr-mean
+vsize    <- clr(rowMeans(OTU4corr_named_mat, 1))+6
+am.coord <- layout.fruchterman.reingold(ig.mb)
+
+par(mfrow=c(1,3))
+plot(ig.mb, layout=am.coord, vertex.size=vsize, vertex.label=NA, main="MB")
+plot(ig.gl, layout=am.coord, vertex.size=vsize, vertex.label=NA, main="glasso")
+plot(ig.sparcc, layout=am.coord, vertex.size=vsize, vertex.label=NA, main="sparcc")
+```
+
+Looking at number of vertices and edges in MB model:
+```{r}
+V(ig.mb)
+```
+
+```{r}
+E(ig.mb)
+```
+
+```{r}
+V(ig.gl)$name <- colnames(OTU4corr_named_mat)
+V(ig.mb)$name <- colnames(OTU4corr_named_mat)
+
+custombluegreen<-rgb(0/255,158/255,115/255)
+```
+
+
+```{r}
+V(ig.gl)$color <- "grey"
+
+E(ig.gl)$color <- custombluegreen
+#E(ig.gl)$color[E(ig.gl)$weight<0] <- customreddishpurple
+E(ig.gl)$width <- abs(E(ig.gl)$weight)*2
+
+V(ig.mb)$color <- "grey"
+
+E(ig.mb)$color <- custombluegreen
+#E(ig.mb)$color[E(ig.mb)$weight<0] <- customreddishpurple
+E(ig.mb)$width <- abs(E(ig.mb)$weight)*2
+
+
+par(mfrow=c(1,2))
+plot(ig.gl, vertex.size=vsize, vertex.label.dist=1.1,
+     vertex.label.cex=0.5,
+     vertex.label.color="black", main="R1+R2 glasso", layout=am.coord)
+
+plot(ig.mb, vertex.size=vsize, vertex.label.dist=1.1,
+     vertex.label.cex=0.5,
+     vertex.label.color="black", main="R1+R2 mb", layout=am.coord)
+
+#layout=am.coord
+#layout=layout_with_kk(ig.gl)
+```
+
+Figure 8B
+```{r}
+
+plot(ig.mb, vertex.size=vsize, vertex.label.dist=1.1,
+     vertex.label.cex=0.5,
+     vertex.label.color="black", main="R1+R2 mb", layout=am.coord)
+```
+
+```{r}
+# pdf(file = "Rural_mb_network_sizescale.pdf",   
+#      width = 8, 
+#      height = 8)
+# plot(ig.mb, vertex.size=vsize, vertex.label.dist=1.1,
+#      vertex.label.cex=0.5,
+#      vertex.label.color="black", main="R1+R2 mb", layout=am.coord)
+# dev.off()
+```
+
+```{r}
+plot(density((E(ig.gl)$weight)),xlab="Edge Weight",main="")
+```
+Edges are primarily positive
+
+### Urban Network 
+
+```{r}
+pargs2 <- list(rep.num=50, seed=10010, ncores=10)
+
+OTU4corr_named_mat<- as.matrix(mergeU_widerdf)
+
+se <- spiec.easi(OTU4corr_named_mat, method='glasso', lambda.min.ratio=1e-2,
+                          nlambda=20, pulsar.params=pargs2)
+
+se.mb <- spiec.easi(OTU4corr_named_mat, method='mb', lambda.min.ratio=1e-2,
+                          nlambda=20, pulsar.params=pargs2)
+```
+
+```{r}
+sparcc.oki<- sparcc(OTU4corr_named_mat)
+
+sparcc.graph <- abs(sparcc.oki$Cor) >= 0.3
+diag(sparcc.graph) <- 0
+library(Matrix)
+sparcc.graph <- Matrix(sparcc.graph, sparse=TRUE)
+
+## Create igraph objects
+ig.mb     <- adj2igraph(getRefit(se.mb))
+ig.gl     <- adj2igraph(getRefit(se))
+ig.sparcc <- adj2igraph(sparcc.graph)
+```
+
+```{r}
+## set size of vertex proportional to clr-mean
+vsize    <- clr(rowMeans(OTU4corr_named_mat, 1))+6
+am.coord <- layout.fruchterman.reingold(ig.mb)
+
+par(mfrow=c(1,3))
+plot(ig.mb, layout=am.coord, vertex.size=vsize, vertex.label=NA, main="MB")
+plot(ig.gl, layout=am.coord, vertex.size=vsize, vertex.label=NA, main="glasso")
+plot(ig.sparcc, layout=am.coord, vertex.size=vsize, vertex.label=NA, main="sparcc")
+```
+
+```{r}
+V(ig.mb)
+```
+
+```{r}
+E(ig.mb)
+```
+
+```{r}
+V(ig.gl)$name <- colnames(OTU4corr_named_mat)
+V(ig.mb)$name <- colnames(OTU4corr_named_mat)
+```
+
+```{r}
+V(ig.gl)$color <- "grey"
+
+E(ig.gl)$color <- custombluegreen
+#E(ig.gl)$color[E(ig.gl)$weight<0] <- customreddishpurple
+E(ig.gl)$width <- abs(E(ig.gl)$weight)*2
+
+V(ig.mb)$color <- "grey"
+
+E(ig.mb)$color <- custombluegreen
+#E(ig.mb)$color[E(ig.mb)$weight<0] <- customreddishpurple
+E(ig.mb)$width <- abs(E(ig.mb)$weight)*2
+
+
+par(mfrow=c(1,2))
+plot(ig.gl, vertex.size=vsize, vertex.label.dist=1.1,
+     vertex.label.cex=0.5,
+     vertex.label.color="black", main="U1+U2 glasso", layout=am.coord)
+
+plot(ig.mb, vertex.size=vsize, vertex.label.dist=1.1,
+     vertex.label.cex=0.5,
+     vertex.label.color="black", main="U1+U2 mb", layout=am.coord)
+
+#layout=am.coord
+#layout=layout_with_kk(ig.gl)
+```
+
+Figure 8A
+```{r}
+
+plot(ig.mb, vertex.size=vsize, vertex.label.dist=1.1,
+     vertex.label.cex=0.5,
+     vertex.label.color="black", main="U1+U2 mb", layout=am.coord)
+```
+
+```{r}
+# pdf(file = "Urban_mb_network_sizescale.pdf",   
+#      width = 8, 
+#      height = 8)
+# plot(ig.mb, vertex.size=vsize, vertex.label.dist=1.1,
+#      vertex.label.cex=0.5,
+#      vertex.label.color="black", main="R1+R2 mb", layout=am.coord)
+# dev.off()
+```
+
+```{r}
+plot(density((E(ig.gl)$weight)),xlab="Edge Weight",main="")
+```
+
+## Bubble plots for individual orders
+Look at which genera/species are abundant within orders of interest
+
+### Vibrionales
+```{r, cache=TRUE}
+ps_RA_glomG<- tax_glom(ps_RA, 'Genus')
+genusmelt <- psmelt(ps_RA_glomG)
+
+genusmelt$Order<-str_sub(genusmelt$Order, 6, str_length(genusmelt$Order))
+
+genusmelt <- genusmelt %>% filter(Order %in% c("Vibrionales", "Thiotrichales","Thiomicrospirales", "Sphingomonadales", "Sphingobacteriales", "Selenomondales", "Saccharimonadales", "Pseudomonadales", "Lactobacillales", "Clostridiales", "Cloacimonadales", "Chitinophagales", "Campylobacterales", "Betaproteobacteriales", "Bacteroidales", "Alteromonadales", "Aeromonadales")) 
+
+genusmelt_group_filter <- genusmelt %>% group_by(LandUse, Number, Position, date, Order) %>% mutate(ordersum = sum(Abundance)) %>% filter(ordersum>=1)
+
+genusmelt_group_filter <- genusmelt_group_filter  %>% filter(Abundance>0)
+
+#mergemelt$Order[mergemelt$Abundance < 0.1] <- "z< 1% abund."
+
+mergemelt_vibrio <- genusmelt_group_filter %>% filter(Order == "Vibrionales")
+
+
+bubble <- mergemelt_vibrio %>% ggplot(aes(x=date, y = Genus))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))
+
+bubble
+```
+
+Vibrionales species:
+```{r, cache=TRUE}
+ps_RA_glomS<- tax_glom(ps_RA, 'Species')
+speciesmelt <- psmelt(ps_RA_glomS)
+
+speciesmelt$Order<-str_sub(speciesmelt$Order, 6, str_length(speciesmelt$Order))
+
+speciesmelt <- speciesmelt %>% filter(Order %in% c("Vibrionales", "Thiotrichales","Thiomicrospirales", "Sphingomonadales", "Sphingobacteriales", "Selenomondales", "Saccharimonadales", "Pseudomonadales", "Lactobacillales", "Clostridiales", "Cloacimonadales", "Chitinophagales", "Campylobacterales", "Betaproteobacteriales", "Bacteroidales", "Alteromonadales", "Aeromonadales")) 
+
+speciesmelt_group_filter <- speciesmelt %>% group_by(LandUse, Number, Position, date, Order) %>% mutate(ordersum = sum(Abundance)) %>% filter(ordersum>=1)
+
+#mergemelt$Order[mergemelt$Abundance < 0.1] <- "z< 1% abund."
+
+speciesmelt_vibrio <- speciesmelt_group_filter %>% filter(Order == "Vibrionales")
+
+speciesmelt_vibrio <- speciesmelt_vibrio %>% filter(Abundance > 0)
+
+bubble <- speciesmelt_vibrio %>% ggplot(aes(x=date, y = Species))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))
+
+bubble
+```
+
+
+### Campylobacterales
+```{r}
+mergemelt_camp <- genusmelt_group_filter %>% filter(Order == "Campylobacterales")
+
+bubble <- mergemelt_camp %>% ggplot(aes(x=date, y = Genus))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))
+
+bubble
+```
+
+Campylobacterales species
+``` {r}
+speciesmelt_camp <- speciesmelt_group_filter %>% filter(Order == "Campylobacterales")
+
+speciesmelt_camp <- speciesmelt_camp %>% filter(Abundance > 0)
+
+bubble <- speciesmelt_camp %>% ggplot(aes(x=date, y = Species))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))
+
+bubble
+```
+
+### Betaproteobacteriales
+```{r}
+mergemelt_betabact <- genusmelt_group_filter %>% filter(Order == "Betaproteobacteriales")
+
+bubble <- mergemelt_betabact %>% ggplot(aes(x=date, y = Genus))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))
+
+bubble
+```
+
+
+Betaproteobacteriales species
+```{r}
+speciesmelt_betabact <- speciesmelt_group_filter %>% filter(Order == "Betaproteobacteriales")
+
+speciesmelt_betabact <- speciesmelt_betabact %>% filter(Abundance > 0)
+
+bubble <- speciesmelt_betabact %>% ggplot(aes(x=date, y = Family))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))
+
+bubble
+```
+
+### Bacteroidales
+```{r}
+mergemelt_bacteroid <- genusmelt_group_filter %>% filter(Order == "Bacteroidales")
+
+bubble <- mergemelt_bacteroid %>% ggplot(aes(x=date, y = Genus))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))
+
+bubble
+```
+
+### Clostridiales
+```{r}
+mergemelt_clos <-genusmelt_group_filter%>% filter(Order == "Clostridiales") %>% filter(Abundance > 0)
+
+bubble <-mergemelt_clos %>% ggplot(aes(x=date, y = Genus))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))
+
+bubble
+```
+
+
+### Pseudomonadales
+```{r}
+mergemelt_pseudo <- genusmelt_group_filter %>% filter(Order == "Pseudomonadales")
+
+bubble <-mergemelt_pseudo %>% ggplot(aes(x=date, y = Genus))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))
+
+bubble
+```
+
+filter for pseudomonas + Acinetobacter genus, then species glom 
+
+```{r}
+ps_RA_pseudo <- subset_taxa(ps_RA, Genus %in% c("D_5__Pseudomonas", "D_5__Acinetobacter"))
+ps_RA_glomS<- tax_glom(ps_RA_pseudo , 'Species')
+pseudomelt <- psmelt(ps_RA_glomS)
+
+bubble <-pseudomelt %>% ggplot(aes(x=date, y = Species))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))
+
+bubble
+
+```
+
+
+# Physicochemical data
+
+CTD probe:
+```{r}
+rink <- read.csv("mean_sd_rinko.csv")
+str(rink)
+
+rink <- rink %>% separate(date, c("year", "month", "day"), sep = "/", remove = FALSE)
+#rink$day <- sub("^0+", "", rink$day) 
+#rink$month <- sub("^0+", "", rink$month) 
+
+rink$number<-substr(rink$location, 2, 2)
+rink$UR <- substr(rink$location, 1, 1)
+
+rink<- rink %>% unite(Name, c(sample,year, month, day), sep = "-", remove = FALSE)
+```
+
+nutrients:
+```{r}
+nuts <- read.csv("nuts_microMtotal.csv")
+
+nuts <- nuts %>% separate(dates, c("year", "month", "day"), sep = "-", remove = FALSE) %>% unite(col = 'Name', c(siteID, year, month, day), sep ='-') 
+
+nuts$number<-substr(nuts$area, 2, 2)
+nuts$UR <- substr(nuts$area, 1, 1)
+nuts$Position <- nuts$sitepos
+
+nuts<- nuts %>% select(Name, replicate, landuse, dates, NO3, NO2, NH4,PO4, SiO2)
+
+nuts_avg <- nuts %>% group_by(Name, landuse, dates) %>% summarise_at(.vars = c("NO3", "NO2", "NH4","PO4", "SiO2"), .funs = c(mean="mean")) %>% ungroup()
+```
+
+
+Put CTD and nutrient data into single dataframe:
+```{r}
+env <- merge(nuts_avg, rink, by = "Name")
+# get r1 r2 number and c n s into separate columns 
+
+```
+
+
+```{r}
+env_clean <- env %>%  select(Name, landuse,location, Position, sample, number, UR, dates, year, month, day, NO3_mean, NO2_mean, NH4_mean, PO4_mean, SiO2_mean, water_temp_Mean, salinity_Mean, chl_a_Mean, tur_range_Mean, do_Mean) %>% mutate(NO2_NO3  = NO3_mean + NO2_mean)
+
+str(env_clean)
+```
+
+z-score data columns:
+```{r}
+library(magrittr)
+library(liver)
+
+env_clean$NO3_z <- transform(env_clean$NO3_mean, method = "zscore")
+env_clean$NO2_z  <- transform(env_clean$NO2_mean, method = "zscore")
+env_clean$NH4_z  <- transform(env_clean$NH4_mean, method = "zscore")
+env_clean$PO4_z  <- transform(env_clean$PO4_mean, method = "zscore")
+env_clean$SiO2_z  <- transform(env_clean$SiO2_mean, method = "zscore")
+env_clean$water_temp_z  <- transform(env_clean$water_temp_Mean, method = "zscore")
+env_clean$salinity_z  <- transform(env_clean$salinity_Mean, method = "zscore")
+env_clean$chl_a_z <- transform(env_clean$chl_a_Mean, method = "zscore")
+env_clean$tur_z  <- transform(env_clean$tur_range_Mean, method = "zscore")
+env_clean$do_z  <- transform(env_clean$do_Mean, method = "zscore")
+env_clean$NO2_NO3_z <- transform(env_clean$NO2_NO3, method = "zscore")
+```
+
+## correlation plots
+
+```{r}
+library(corrplot)
+
+corrplot(cor(env_clean %>% select(water_temp_z, salinity_z, chl_a_z, tur_z, do_z, NO2_NO3_z, NH4_z, PO4_z, SiO2_z)), type = "upper", diag = FALSE, title = "All Sites")
+
+```
+
+
+by site type
+### Urban
+
+```{r}
+corrplot(cor(env_clean %>% filter(landuse == "U") %>%  select(water_temp_z, salinity_z, chl_a_z, tur_z, do_z, NO2_NO3_z, NH4_z, PO4_z, SiO2_z)), type = "upper", diag = FALSE, title = "Urban Sites")
+```
+Significance test and add significance results to the plot: 
+(Figure 4)
+```{r}
+testRes = cor.mtest((env_clean %>% filter(landuse == "U") %>%  select(water_temp_z, salinity_z, chl_a_z, tur_z, do_z, NO2_NO3_z, NH4_z, PO4_z, SiO2_z)), conf.level = 0.95)
+
+
+M = cor(env_clean %>% filter(landuse == "U") %>%  select(water_temp_z, salinity_z, chl_a_z, tur_z, do_z, NO2_NO3_z, NH4_z, PO4_z, SiO2_z))
+
+corrplot(M, p.mat = testRes$p, diag = FALSE, type = 'upper',
+         sig.level = c( 0.01), pch.cex = 1.3,
+         insig = 'label_sig', pch.col = 'black', tl.col = "black", title = "Urban Sites")
+
+```
+
+```{r}
+# pdf(file = "env_corr_plot_urban.pdf",   # The directory you want to save the file in
+#     width = 4, # The width of the plot in inches
+#     height = 4)
+# 
+# 
+# corrplot(M, p.mat = testRes$p, diag = FALSE, type = 'upper',
+#          sig.level = c( 0.01), pch.cex = 1.3,
+#          insig = 'label_sig', pch.col = 'black', tl.col = "black", title = "Urban Sites")
+# 
+# dev.off()
+```
+
+
+
+###Rural
+
+```{r}
+corrplot(cor(env_clean %>% filter(landuse == "R") %>%  select(water_temp_z, salinity_z, chl_a_z, tur_z, do_z, NO2_NO3_z, NH4_z, PO4_z, SiO2_z)), type = "upper", diag = FALSE, tl.col = "black", title = "Rural Sites")
+
+#addCoef.col = "black"
+```  
+
+Significance test and add significance results to the plot: 
+(Figure 4)
+```{r}
+testRes = cor.mtest((env_clean %>% filter(landuse == "R") %>%  select(water_temp_z, salinity_z, chl_a_z, tur_z, do_z, NO2_NO3_z, NH4_z, PO4_z, SiO2_z)), conf.level = 0.95)
+
+
+M = cor(env_clean %>% filter(landuse == "R") %>%  select(water_temp_z, salinity_z, chl_a_z, tur_z, do_z, NO2_NO3_z, NH4_z, PO4_z, SiO2_z))
+
+corrplot(M, p.mat = testRes$p, diag = FALSE, type = 'upper',
+         sig.level = c( 0.01), pch.cex = 1.3,
+         insig = 'label_sig', pch.col = 'black', tl.col = "black", title = "Rural Sites")
+
+```
+
+```{r}
+# pdf(file = "env_corr_plot_rural.pdf",   # The directory you want to save the file in
+#     width = 4, # The width of the plot in inches
+#     height = 4)
+# 
+# 
+# corrplot(M, p.mat = testRes$p, diag = FALSE, type = 'upper',
+#          sig.level = c( 0.01), pch.cex = 1.3,
+#          insig = 'label_sig', pch.col = 'black', tl.col = "black", title = "Rural Sites")
+# 
+# dev.off()
+```
+
+# Physicochemical timeseries plots
+
+prep data:
+melt raw env data, plot by site by time
+
+```{r}
+env_timeline <- env_clean %>% select(Name, landuse, location, Position, sample, number, UR, dates, NO3_mean, NO2_mean, NH4_mean,PO4_mean,SiO2_mean,water_temp_Mean, salinity_Mean,chl_a_Mean,tur_range_Mean, do_Mean) %>%
+  mutate(NO2_NO3 = NO3_mean + NO2_mean) %>% 
+  pivot_longer(!c(Name, landuse, location, Position, sample, number, UR, dates), names_to = "var", values_to = "value")
+
+library(lubridate)
+
+env_timeline$dates <- ymd(env_timeline$dates)
+
+env_timeline$Position <- factor(env_timeline$Position, levels = c("S", "C", "N"))
+
+```
+
+
+## physical timeseries
+```{r}
+env_timeline %>% filter(var %in% c("water_temp_Mean", "salinity_Mean", "tur_range_Mean", "do_Mean")) %>%  ggplot(aes( x = dates, y =  value, color = Position)) +
+  facet_grid(factor(var, levels = c("water_temp_Mean", "salinity_Mean", "tur_range_Mean", "do_Mean"))~factor(location, levels= c("U1", "U2", "R1", "R2")), scales = "free_y") + geom_point() + geom_path(size =.1)  + xlab("") + ylab("") + theme_bw() + scale_color_manual(values = c("#005694","#D82354", "#FFC317")) + theme(legend.position = "none") + theme(plot.margin= margin(t = 0, r = 0, b = 0, l = 0, unit = "pt")) + theme(axis.title=element_text(size=8)) + scale_x_date(date_breaks = "1 month", labels=date_format("%b")) + theme(axis.text.x = element_text(angle= 90, vjust = 0.5, hjust=1)) + theme(panel.grid.minor = element_blank())
+```
+
+ggsave("phys_metadata.pdf", width = 10, height = 6)
+
+## chemical timeseries
+
+```{r}
+env_timeline %>% filter(var %in% c("NO2_NO3", "NH4_mean",    "PO4_mean", "SiO2_mean" )) %>%  ggplot(aes( x = dates, y =  value, color = Position)) +
+  facet_grid(factor(var, levels = c("NO2_NO3", "NH4_mean",   "PO4_mean", "SiO2_mean" ))~factor(location, levels= c("U1", "U2", "R1", "R2")), scales = "free_y") + geom_point() + geom_path(size =.1)  + xlab("") + ylab("") + theme_bw() + scale_color_manual(values = c("#005694","#D82354", "#FFC317")) + theme(legend.position = "none") + theme(plot.margin= margin(t = 0, r = 0, b = 0, l = 0, unit = "pt")) + theme(axis.title=element_text(size=8)) + scale_x_date(date_breaks = "1 month", labels=date_format("%b")) + theme(axis.text.x = element_text(angle= 90, vjust = 0.5, hjust=1)) + theme(panel.grid.minor = element_blank())
+```
+
+ggsave("chem_metadata.pdf", width = 10, height = 6)
+
+
+##Chlorophyll a
+
+```{r}
+env_timeline %>% filter(var == "chl_a_Mean") %>%  ggplot(aes( x = dates, y =  value, color = Position)) +
+  facet_grid(factor(var, levels = c("chl_a_Mean" ))~factor(location, levels= c("U1", "U2", "R1", "R2")), scales = "free_y") + geom_point() + geom_path(size =.1)  + xlab("") + ylab("") + theme_bw() + scale_color_manual(values = c("#005694","#D82354", "#FFC317")) + theme(legend.position = "none") + theme(plot.margin= margin(t = 0, r = 0, b = 0, l = 0, unit = "pt")) + theme(axis.title=element_text(size=8)) + scale_x_date(date_breaks = "1 month", labels=date_format("%b")) + theme(axis.text.x = element_text(angle= 90, vjust = 0.5, hjust=1)) + theme(panel.grid.minor = element_blank())
+```
+
+# RDA
+Prep data for Redundancy Analysis 
+
+```{r}
+samplemap<- read.csv("meta.csv")
+samplemap$date <- dmy(samplemap$date)
+samplemap$Month <- as.factor(as.numeric(samplemap$Month))
+
+samplemap <- samplemap %>% mutate(Day=day(date)) %>% unite(Name, c(LandUse, Number, Position, Month, Day), sep = "_", remove = FALSE)
+
+str(samplemap)
+```
+
+```{r}
+samplemap$datechr <- as.character(samplemap$date)
+samplemap <- samplemap %>% unite(Name, c(SS, datechr), sep = "-")
+
+metaE <- left_join(samplemap, env_clean)
+row.names(metaE) <- metaE$SampleID
+
+METAenv <- sample_data(metaE)
+```
+
+## Rural
+(Figure S5 A)
+```{r}
+rural <- subset_samples(ps_nochloro, LandUse %in% c("R"))
+
+
+OTU4clr<- data.frame(t(data.frame(otu_table(rural))))
+
+row.names(OTU4clr) <- str_remove(row.names(OTU4clr), "X")
+row.names(OTU4clr) <- gsub("\\.", "-", row.names(OTU4clr))
+
+OTUs.clr <- codaSeq.clr(OTU4clr + 0.5, samples.by.row=TRUE)
+OTU2 <- otu_table(as.matrix(OTUs.clr), taxa_are_rows = FALSE)
+
+
+psCLR <- phyloseq(OTU2,TAX,METAenv)
+
+
+cca_litdir <- ordinate(psCLR, formula = ~ NO2_NO3_z+ NH4_z +PO4_z +SiO2_z +water_temp_z +salinity_z + tur_z +do_z , "RDA")
+
+
+p0 <- plot_ordination(psCLR, cca_litdir, type = "samples") + theme_bw()+ geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) + geom_point(aes(fill=Month, shape = Number), size =3)  + scale_shape_manual(values= c(21,24, 22)) + scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))+ theme(text = element_text(size = 14)) +  theme(legend.position="none") +ggtitle("Rural Sites") 
+
+
+# Now add the environmental variables as arrows
+arrowmat = vegan::scores(cca_litdir, display = "bp")
+arrowdf <- data.frame(labels = rownames(arrowmat), arrowmat)
+arrow_map = aes(xend = 3* RDA1, yend = 3* RDA2, x = 0, y = 0, shape = NULL, color = NULL, 
+    label = labels)
+label_map = aes(x = 3.5 * RDA1, y = 3.5 * RDA2, shape = NULL, color = NULL, 
+    label = labels)
+arrowhead = arrow(length = unit(0.02, "npc"))
+surfRDA_plot = p0 + geom_segment(arrow_map, size = 0.5, data = arrowdf, color = "darkgray", 
+    arrow = arrowhead) + geom_text(label_map, size = 4, data = arrowdf)
+surfRDA_plot
+```
+ggsave("RuralSites_RDA.pdf", width= 5, height = 4)
+
+
+ANOVA of RDA results:
+```{r}
+metaR <- metaE[row.names(metaE) %in% row.names(OTU4clr),]
+
+ruralRDA <- rda(OTU4clr ~ NO2_NO3_z+ NH4_z +PO4_z +SiO2_z +water_temp_z +salinity_z + tur_z +do_z, data = metaR)
+
+anova(ruralRDA , perm = 999)
+```
+Overall results are significant. 
+
+ANOVA of RDA results by term:
+(Table S2 A)
+```{r}
+anova(ruralRDA, by="term", perm=999)
+```
+Variance partitioning for significant terms: 
+(Table S2 A)
+```{r}
+mod<-varpart(OTU4clr, metaR["water_temp_z"], metaR["salinity_z"], metaR["PO4_z"], metaR["do_z"])
+mod
+```
+
+## Urban
+
+(Figure S5 B)
+```{r}
+urban <- subset_samples(ps_nochloro, LandUse %in% c("U"))
+
+OTU4clr<- data.frame(t(data.frame(otu_table(urban))))
+
+row.names(OTU4clr) <- str_remove(row.names(OTU4clr), "X")
+row.names(OTU4clr) <- gsub("\\.", "-", row.names(OTU4clr))
+
+OTUs.clr <- codaSeq.clr(OTU4clr + 0.5, samples.by.row=TRUE)
+OTU2 <- otu_table(as.matrix(OTUs.clr), taxa_are_rows = FALSE)
+
+psCLR <- phyloseq(OTU2,TAX,METAenv)
+
+cca_litdir <- ordinate(psCLR, formula = ~ NO2_NO3_z+ NH4_z +PO4_z +SiO2_z +water_temp_z +salinity_z + tur_z +do_z , "RDA")
+
+
+p0 <- plot_ordination(psCLR, cca_litdir, type = "samples") + theme_bw()+ geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) + geom_point(aes(fill=Month, shape = Number), size =3)  + scale_shape_manual(values= c(21,24, 22)) + scale_fill_manual(values=c(blue[1:3], purple[2:4], green[1:3], yellow[1:3]))+ theme(text = element_text(size = 14)) +  theme(legend.position="none") +ggtitle("Urban Sites") 
+# Now add the environmental variables as arrows
+arrowmat = vegan::scores(cca_litdir, display = "bp")
+arrowdf <- data.frame(labels = rownames(arrowmat), arrowmat)
+arrow_map = aes(xend = 3* RDA1, yend = 3* RDA2, x = 0, y = 0, shape = NULL, color = NULL, 
+    label = labels)
+label_map = aes(x = 3.5 * RDA1, y = 3.5 * RDA2, shape = NULL, color = NULL, 
+    label = labels)
+arrowhead = arrow(length = unit(0.02, "npc"))
+surfRDA_plot = p0 + geom_segment(arrow_map, size = 0.5, data = arrowdf, color = "gray", 
+    arrow = arrowhead) + geom_text(label_map, size = 4, data = arrowdf)
+surfRDA_plot
+
+
+```
+ggsave("UrbanSites_RDA.pdf", width= 5, height = 4)
+
+ANOVA of RDA results:
+```{r}
+metaU <- metaE[row.names(metaE) %in% row.names(OTU4clr),]
+
+urbanRDA <- rda(OTU4clr ~ NO2_NO3_z+ NH4_z +PO4_z +SiO2_z +water_temp_z +salinity_z + tur_z +do_z, data = metaU)
+
+anova(urbanRDA , perm = 999)
+```
+Overall results are significant. 
+
+ANOVA of RDA results by term:
+(Table S2 B)
+```{r}
+anova(urbanRDA, by="term", perm=999)
+```
+Variance partitioning for significant terms: 
+(Table S2 B)
+```{r}
+modU<-varpart(OTU4clr, metaU["water_temp_z"], metaU["NO2_NO3_z"])
+modU
+```
+
+# Session info
+```{r}
+sessioninfo::session_info()
+```
+
