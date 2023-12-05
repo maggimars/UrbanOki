@@ -460,6 +460,20 @@ r
 ```
 ggsave("RuralSites_pCoA.pdf", width= 6, height = 4)
 
+#### with colorblind pallette
+
+color-blind palette made based on Paul Tol's Introductionto color schemes: https://personal.sron.nl/~pault/
+```{r}
+cb <- c("#004488", "#33CCEE", "#6699CC", "#CC6677", "#882255", "#AA4499", "#009988", "#117733", "#999933", "#DDCC77", "#EE7733", "#CC3311")
+```
+
+```{r}
+r<-plot_ordination(psCLR, ordu)+theme_bw()  +  theme(text = element_text(size=14)) +  geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +geom_point(aes(fill=Month, shape = Number), size =3)  + scale_shape_manual(values= c(21,24, 22)) +scale_fill_manual(values=cb) +guides(fill = guide_legend(override.aes=list(shape=21))) + ggtitle("Rural Sites")
+r
+```
+
+
+
 ### Rural PERMANOVAs
 **Rural samples by month:** (Table 1)
 ```{r}
@@ -505,6 +519,14 @@ u<-plot_ordination(psCLR, ordu)+theme_bw()  +  theme(text = element_text(size=14
 u
 ```
 ggsave("UrbanSites_pCoA.pdf", width= 6, height = 4)
+
+#### with colorblind colors
+
+```{r}
+u<-plot_ordination(psCLR, ordu)+theme_bw()  +  theme(text = element_text(size=14)) +  geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) +geom_point(aes(fill=Month, shape = Number), size =3)  + scale_shape_manual(values= c(21, 24)) +scale_fill_manual(values=cb) +guides(fill = guide_legend(override.aes=list(shape=21)))
+u
+```
+
 
 ### Urban PERMANOVAs 
 **Urban samples by month:** (Table 1)
@@ -593,6 +615,18 @@ bubble <- mergemelt %>% ggplot(aes(x=date, y = Order))+ theme_bw()  + geom_point
 bubble
 ```
 ggsave("allOrder_bubblesF.pdf",height = 8, width = 11)
+
+#### colorblind versions
+```{r}
+bubble <- mergemelt %>% ggplot(aes(x=date, y = Order))+ theme_bw()  + geom_point(aes(size = Abundance, fill = Month), shape = 21, color = "black")+
+  theme( axis.text.x=element_text(angle=90,hjust=1,vjust=0),
+          panel.background = element_blank()) +
+    ylab("") +
+    xlab("")+ 
+  facet_grid(~LandUse+Number+Position) +scale_fill_manual(values=cb)
+
+bubble
+```
 
 
 ## filtered rel abund bar plots (Orange, red, orange and red)
@@ -1157,7 +1191,8 @@ corrplot(cor(env_clean %>% select(water_temp_z, salinity_z, chl_a_z, tur_z, do_z
 ```
 
 
-by site type
+by site type:
+
 ### Urban
 
 ```{r}
@@ -1192,7 +1227,7 @@ corrplot(M, p.mat = testRes$p, diag = FALSE, type = 'upper',
 
 
 
-###Rural
+### Rural
 
 ```{r}
 corrplot(cor(env_clean %>% filter(landuse == "R") %>%  select(water_temp_z, salinity_z, chl_a_z, tur_z, do_z, NO2_NO3_z, NH4_z, PO4_z, SiO2_z)), type = "upper", diag = FALSE, tl.col = "black", title = "Rural Sites")
@@ -1247,6 +1282,7 @@ env_timeline$Position <- factor(env_timeline$Position, levels = c("S", "C", "N")
 
 
 ## physical timeseries
+
 ```{r}
 env_timeline %>% filter(var %in% c("water_temp_Mean", "salinity_Mean", "tur_range_Mean", "do_Mean")) %>%  ggplot(aes( x = dates, y =  value, color = Position)) +
   facet_grid(factor(var, levels = c("water_temp_Mean", "salinity_Mean", "tur_range_Mean", "do_Mean"))~factor(location, levels= c("U1", "U2", "R1", "R2")), scales = "free_y") + geom_point() + geom_path(size =.1)  + xlab("") + ylab("") + theme_bw() + scale_color_manual(values = c("#005694","#D82354", "#FFC317")) + theme(legend.position = "none") + theme(plot.margin= margin(t = 0, r = 0, b = 0, l = 0, unit = "pt")) + theme(axis.title=element_text(size=8)) + scale_x_date(date_breaks = "1 month", labels=date_format("%b")) + theme(axis.text.x = element_text(angle= 90, vjust = 0.5, hjust=1)) + theme(panel.grid.minor = element_blank())
@@ -1264,7 +1300,7 @@ env_timeline %>% filter(var %in% c("NO2_NO3", "NH4_mean",    "PO4_mean", "SiO2_m
 ggsave("chem_metadata.pdf", width = 10, height = 6)
 
 
-##Chlorophyll a
+## Chlorophyll a
 
 ```{r}
 env_timeline %>% filter(var == "chl_a_Mean") %>%  ggplot(aes( x = dates, y =  value, color = Position)) +
@@ -1272,6 +1308,7 @@ env_timeline %>% filter(var == "chl_a_Mean") %>%  ggplot(aes( x = dates, y =  va
 ```
 
 # RDA
+
 Prep data for Redundancy Analysis 
 
 ```{r}
@@ -1333,6 +1370,27 @@ surfRDA_plot
 ggsave("RuralSites_RDA.pdf", width= 5, height = 4)
 
 
+
+#### with colorblind colors
+
+```{r}
+p0 <- plot_ordination(psCLR, cca_litdir, type = "samples") + theme_bw()+ geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) + geom_point(aes(fill=Month, shape = Number), size =3)  + scale_shape_manual(values= c(21,24, 22)) + scale_fill_manual(values=cb)+ theme(text = element_text(size = 14)) +  theme(legend.position="none") +ggtitle("Rural Sites") 
+
+# Now add the environmental variables as arrows
+arrowmat = vegan::scores(cca_litdir, display = "bp")
+arrowdf <- data.frame(labels = rownames(arrowmat), arrowmat)
+arrow_map = aes(xend = 3* RDA1, yend = 3* RDA2, x = 0, y = 0, shape = NULL, color = NULL, 
+    label = labels)
+label_map = aes(x = 3.5 * RDA1, y = 3.5 * RDA2, shape = NULL, color = NULL, 
+    label = labels)
+arrowhead = arrow(length = unit(0.02, "npc"))
+surfRDA_plot = p0 + geom_segment(arrow_map, size = 0.5, data = arrowdf, color = "darkgray", 
+    arrow = arrowhead) + geom_text(label_map, size = 4, data = arrowdf)
+surfRDA_plot
+```
+
+
+
 ANOVA of RDA results:
 ```{r}
 metaR <- metaE[row.names(metaE) %in% row.names(OTU4clr),]
@@ -1386,10 +1444,25 @@ arrowhead = arrow(length = unit(0.02, "npc"))
 surfRDA_plot = p0 + geom_segment(arrow_map, size = 0.5, data = arrowdf, color = "gray", 
     arrow = arrowhead) + geom_text(label_map, size = 4, data = arrowdf)
 surfRDA_plot
-
-
 ```
 ggsave("UrbanSites_RDA.pdf", width= 5, height = 4)
+
+#### with colorblind colors
+```{r}
+p0 <- plot_ordination(psCLR, cca_litdir, type = "samples") + theme_bw()+ geom_hline(yintercept = 0, linetype = "dashed", color = "lightgrey") +  geom_vline(xintercept = 0, linetype = "dashed", color = "lightgrey") + theme(panel.grid.minor = element_blank(), panel.grid.major = element_blank()) + geom_point(aes(fill=Month, shape = Number), size =3)  + scale_shape_manual(values= c(21,24, 22)) + scale_fill_manual(values=cb)+ theme(text = element_text(size = 14)) +  theme(legend.position="none") +ggtitle("Urban Sites") 
+# Now add the environmental variables as arrows
+arrowmat = vegan::scores(cca_litdir, display = "bp")
+arrowdf <- data.frame(labels = rownames(arrowmat), arrowmat)
+arrow_map = aes(xend = 3* RDA1, yend = 3* RDA2, x = 0, y = 0, shape = NULL, color = NULL, 
+    label = labels)
+label_map = aes(x = 3.5 * RDA1, y = 3.5 * RDA2, shape = NULL, color = NULL, 
+    label = labels)
+arrowhead = arrow(length = unit(0.02, "npc"))
+surfRDA_plot = p0 + geom_segment(arrow_map, size = 0.5, data = arrowdf, color = "gray", 
+    arrow = arrowhead) + geom_text(label_map, size = 4, data = arrowdf)
+surfRDA_plot
+```
+
 
 ANOVA of RDA results:
 ```{r}
